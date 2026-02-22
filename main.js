@@ -1959,20 +1959,37 @@ const bootstrap_1 = __webpack_require__(2);
 const api_client_1 = __webpack_require__(13);
 const session_1 = __webpack_require__(7);
 const result_formatter_1 = __webpack_require__(19);
+const context_tool_1 = __webpack_require__(26);
 function requireSession() {
     if (!session_1.sessionManager.isConnected())
         throw new Error('Not connected. Call jovan_connect first.');
     return session_1.sessionManager.get();
 }
 async function handlePollCommands() {
-    const session = requireSession();
-    const approvals = await api_client_1.apiClient.get(`${(0, bootstrap_1.apiPath)('approvalsList', { projectId: session.projectId })}&status=PENDING`);
+    requireSession();
+    const result = await api_client_1.apiClient.get((0, bootstrap_1.apiPath)('sessionPoll'));
+    const commands = result?.commands ?? [];
+    const refreshCmd = commands.find((c) => c.type === 'REFRESH_CONTEXT');
+    if (refreshCmd) {
+        try {
+            await (0, context_tool_1.handleRefreshContext)();
+        }
+        catch {
+        }
+        return (0, result_formatter_1.ok)({
+            projectId: result?.projectId,
+            pendingApprovals: result?.pendingApprovals ?? [],
+            commands,
+            contextRefreshed: true,
+            message: `Context auto-refreshed: ${refreshCmd.reason}. Blueprint directives updated. Resume with latest governance rules.`,
+        });
+    }
     return (0, result_formatter_1.ok)({
-        projectId: session.projectId,
-        pendingApprovals: approvals,
-        message: Array.isArray(approvals) && approvals.length > 0
-            ? `${approvals.length} pending approval(s) require attention.`
-            : 'No pending commands or approvals.',
+        projectId: result?.projectId,
+        pendingApprovals: result?.pendingApprovals ?? [],
+        commands,
+        contextRefreshed: false,
+        message: result?.message ?? 'No pending commands or approvals.',
     });
 }
 async function handleGetSop(args) {
