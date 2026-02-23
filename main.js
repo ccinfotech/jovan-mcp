@@ -76,14 +76,29 @@ function apiPath(pathKey, params = {}) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.config = void 0;
+function detectClientTool() {
+    if (process.env.MCP_CLIENT_TOOL)
+        return process.env.MCP_CLIENT_TOOL;
+    if (process.env.CLAUDE_CODE_VERSION || process.env.CLAUDE_CODE_ENTRYPOINT)
+        return 'claude-code';
+    if (process.env.CURSOR_TRACE_ID)
+        return 'cursor';
+    if (process.env.CONTINUE_CORE_DIR)
+        return 'continue';
+    if (process.env.CODEIUM_API_KEY)
+        return 'windsurf';
+    return 'mcp-client';
+}
 exports.config = {
     apiBaseUrl: process.env.JOVAN_API_URL ?? 'http://localhost:3000/api/v1',
+    defaultApiKey: process.env.JOVAN_API_KEY ?? '',
+    defaultProjectId: process.env.JOVAN_PROJECT_ID ?? '',
     pollIntervalMs: parseInt(process.env.MCP_POLL_INTERVAL ?? '3000', 10),
     pollTimeoutMs: parseInt(process.env.MCP_POLL_TIMEOUT ?? '900000', 10),
     serverName: process.env.MCP_SERVER_NAME ?? 'jovan-mcp-server',
     serverVersion: process.env.MCP_SERVER_VERSION ?? '1.0.0',
     sessionHeader: process.env.MCP_SESSION_HEADER ?? 'X-MCP-Session',
-    clientTool: process.env.MCP_CLIENT_TOOL ?? 'mcp-server',
+    clientTool: detectClientTool(),
     requestTimeoutMs: parseInt(process.env.MCP_REQUEST_TIMEOUT ?? '15000', 10),
     maxConcurrentRequests: parseInt(process.env.MCP_MAX_CONCURRENT ?? '4', 10),
     keepAliveMs: parseInt(process.env.MCP_KEEP_ALIVE ?? '30000', 10),
@@ -176,7 +191,10 @@ function createMcpServer(bootstrap) {
         const meta = bootstrap.tools.find(t => t.id === id);
         return meta?.description ?? '';
     };
-    server.tool(name('AUTH_CONNECT'), desc('AUTH_CONNECT'), { apiKey: zod_1.z.string(), projectId: zod_1.z.string() }, async (args) => (0, connect_tool_1.handleConnect)(args));
+    server.tool(name('AUTH_CONNECT'), desc('AUTH_CONNECT'), {
+        apiKey: zod_1.z.string().optional().describe('JoVan API key. Omit if JOVAN_API_KEY env var is set.'),
+        projectId: zod_1.z.string().optional().describe('JoVan Project ID. Omit if JOVAN_PROJECT_ID env var is set.'),
+    }, async (args) => (0, connect_tool_1.handleConnect)(args));
     server.tool(name('AUTH_DISCONNECT'), desc('AUTH_DISCONNECT'), {}, async () => (0, disconnect_tool_1.handleDisconnect)());
     server.tool(name('ASSETS_LIST'), desc('ASSETS_LIST'), { sdlcPhaseId: zod_1.z.string().optional() }, withLogging('ASSETS_LIST', async (args) => (0, assets_tool_1.handleListAssets)(args)));
     server.tool(name('ASSETS_RETRIEVE'), desc('ASSETS_RETRIEVE'), { packId: zod_1.z.string() }, withLogging('ASSETS_RETRIEVE', async (args) => (0, assets_tool_1.handleRetrieveAsset)(args)));
@@ -678,13 +696,20 @@ async function handleConnect(args) {
     if (session_1.sessionManager.isConnected()) {
         return (0, result_formatter_1.text)('Already connected. Use jovan_disconnect first.');
     }
+    const apiKey = args.apiKey || config_1.config.defaultApiKey;
+    const projectId = args.projectId || config_1.config.defaultProjectId;
+    if (!apiKey || !projectId) {
+        return (0, result_formatter_1.text)('Connection failed: apiKey and projectId are required.\n' +
+            'Pass them as arguments to jovan_connect, or set JOVAN_API_KEY and JOVAN_PROJECT_ID ' +
+            'environment variables in your MCP server configuration.');
+    }
     const { fingerprint, machineName } = await (0, fingerprint_1.getMachineFingerprint)();
     session_1.sessionManager.setEncryptionKey(fingerprint);
     const result = await api_client_1.apiClient.post((0, bootstrap_1.apiPath)('connect'), {
-        apiKey: args.apiKey,
+        apiKey,
         machineFingerprint: fingerprint,
-        projectId: args.projectId,
-        clientInfo: { machineName, tool: config_1.config.clientTool },
+        projectId,
+        clientInfo: { machineName, aiEngine: config_1.config.clientTool, tool: config_1.config.clientTool },
     }, false);
     if (result.signingSecret) {
         request_signer_1.requestSigner.setSecret(result.signingSecret);
